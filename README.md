@@ -1,8 +1,9 @@
 # spots-ish
 
-iSH HTTP server for the spots wire.
+iSH serves the map page and the spots wire. Pythonista WebView is the window. Remote WebSDR is the iframe waterfall.
 
 ```
+GET  /
 GET  /meta
 GET  /spots?since=<ts>
 POST /tune
@@ -12,11 +13,10 @@ POST /ack
 ## iSH
 
 ```
-git clone https://github.com/Peekabot/spots-ish.git
-cd spots-ish
+git pull
 python3 ish_spots.py
 ```
 
-Listens on `0.0.0.0:8000`. Pythonista client hits `127.0.0.1:8000`.
+## Pythonista
 
-See `spots_proto.md`.
+Run `spots_webview.py` — loads `http://127.0.0.1:8000/`

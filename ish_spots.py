@@ -1,12 +1,15 @@
 # ish_spots.py — run in iSH: python3 ish_spots.py
-# GET /meta  GET /spots?since=  POST /tune  POST /ack
+# GET /  /meta  /spots?since=  POST /tune  /ack
 
 import json
+import os
 import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import urlparse, parse_qs
 
 HOST, PORT = "0.0.0.0", 8000
+HERE = os.path.dirname(os.path.abspath(__file__))
+INDEX = os.path.join(HERE, "index.html")
 
 ROWS = [
     {"ts": time.time() - 4, "src": "seed", "freq": 144390000, "mode": "APRS",
@@ -52,6 +55,13 @@ class H(BaseHTTPRequestHandler):
 
     def do_GET(self):
         u = urlparse(self.path)
+        if u.path in ("/", "/index.html"):
+            try:
+                with open(INDEX, "rb") as f:
+                    self._send(200, f.read(), "text/html; charset=utf-8")
+            except IOError:
+                self._send(404, json.dumps({"err": "no index.html"}))
+            return
         if u.path == "/meta":
             self._send(200, json.dumps(meta()))
             return
@@ -74,5 +84,5 @@ class H(BaseHTTPRequestHandler):
 
 
 if __name__ == "__main__":
-    print("spots on http://127.0.0.1:%d  GET /meta  GET /spots" % PORT)
+    print("spots on http://127.0.0.1:%d" % PORT)
     HTTPServer((HOST, PORT), H).serve_forever()
