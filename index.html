@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>spots + websdr</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<style>
+  :root { --bg:#111; --fg:#e8e8e8; --bar:#1c1c1c; --ok:#7dce82; --warn:#e0b44a; }
+  * { box-sizing: border-box; }
+  html, body { margin:0; height:100%; background:var(--bg); color:var(--fg);
+    font:13px/1.35 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  #hdr { height:36px; display:flex; align-items:center; gap:12px; padding:0 8px;
+    background:var(--bar); border-bottom:1px solid #2a2a2a; white-space:nowrap; overflow:auto; }
+  #hdr b { color:var(--ok); }
+  .zero { color:var(--warn); }
+  #layout { display:flex; flex-direction:column; height:calc(100% - 36px); }
+  #map { height:42%; background:#0a0a0a; }
+  #radio { flex:1; display:flex; flex-direction:column; min-height:0; border-top:1px solid #2a2a2a; }
+  #rxbar { display:flex; gap:6px; padding:6px; background:var(--bar); overflow-x:auto; -webkit-overflow-scrolling:touch; }
+  #rxbar button { background:#2a2a2a; color:var(--fg); border:1px solid #444; padding:6px 8px; font:inherit; }
+  #rxbar button.on { border-color:var(--ok); }
+  iframe { flex:1; border:0; background:#000; min-height:0; }
+</style>
+</head>
+<body>
+<div id="hdr">
+  <span>spots: <b id="n-spots">0</b></span>
+  <span>with_coord: <b id="n-coord">0</b></span>
+  <span>last: <b id="n-last">—</b></span>
+  <span>stage: <b id="n-stage">—</b></span>
+  <span id="gate" class="zero"></span>
+</div>
+<div id="layout">
+  <div id="map"></div>
+  <div id="radio">
+    <div id="rxbar"></div>
+    <iframe id="frame" title="receiver" sandbox="allow-scripts allow-same-origin allow-forms"></iframe>
+  </div>
+</div>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+const RECEIVERS = [
+  { id:"sigma-ctma", name:"ΣSDR CT/MA", lat:42.03, lon:-72.58, url:"http://sigmasdr.ddns.net:8073/", unverified:true },
+  { id:"w1eqx-vt", name:"W1EQX VT", lat:43.52, lon:-72.88, url:"http://kiwisdr.w1eqx.com:8073/", unverified:true },
+  { id:"utwente", name:"UTwente", lat:52.24, lon:6.85, url:"http://websdr.ewi.utwente.nl:8901/", unverified:true },
+  { id:"dir", name:"Receiverbook", lat:null, lon:null, url:"https://www.receiverbook.de/", unverified:true }
+];
+
+const map = L.map("map").setView([42.65, -73.76], 6);
+L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", { attribution: "&copy; OSM", maxZoom: 18 }).addTo(map);
+const rxLayer = L.layerGroup().addTo(map);
+const spotLayer = L.layerGroup().addTo(map);
+
+RECEIVERS.forEach(r => {
+  if (r.lat == null) return;
+  L.circleMarker([r.lat, r.lon], { radius:7, color:"#7dce82", weight:2, fillOpacity:0.2 })
+    .bindPopup((r.unverified ? "[unverified] " : "") + r.name)
+    .on("click", () => selectRx(r.id))
+    .addTo(rxLayer);
+});
+
+const bar = document.getElementById("rxbar");
+RECEIVERS.forEach(r => {
+  const b = document.createElement("button");
+  b.textContent = r.name;
+  b.onclick = () => selectRx(r.id);
+  b.dataset.id = r.id;
+  bar.appendChild(b);
+});
+
+function selectRx(id) {
+  const r = RECEIVERS.find(x => x.id === id);
+  if (!r) return;
+  document.getElementById("frame").src = r.url;
+  bar.querySelectorAll("button").forEach(b => b.classList.toggle("on", b.dataset.id === id));
+}
+
+function age(ts) {
+  const s = Math.max(0, Date.now()/1000 - ts);
+  if (s < 60) return Math.round(s) + "s";
+  if (s < 3600) return Math.round(s/60) + "m";
+  return Math.round(s/3600) + "h";
+}
+
+function applyMeta(m) {
+  document.getElementById("n-spots").textContent = m.spots || 0;
+  document.getElementById("n-coord").textContent = m.with_coord || 0;
+  document.getElementById("n-last").textContent = m.last ? age(m.last) : "—";
+  document.getElementById("n-stage").textContent = m.stage || "—";
+  const gate = document.getElementById("gate");
+  const g = m.gate;
+  if (g === 3) { gate.textContent = "gate 3 — no frames"; gate.className = "zero"; }
+  else if (g === 4) { gate.textContent = "gate 4 — frames, no coords"; gate.className = "zero"; }
+  else if (g === 5) { gate.textContent = "gate 5 ok"; gate.className = ""; }
+  else { gate.textContent = ""; }
+}
+
+function addPins(rows) {
+  rows.forEach(s => {
+    if (!(s.crc_ok === true && s.lat != null && s.lon != null)) return;
+    L.circleMarker([s.lat, s.lon], { radius:5, color:"#e0b44a", fillOpacity:0.7 })
+      .bindPopup((s.call_or_id || "?") + "<br>" + s.mode + " " + s.freq + "<br>" + s.src)
+      .addTo(spotLayer);
+  });
+}
+
+let since = 0;
+async function tick() {
+  try {
+    const m = await (await fetch("/meta")).json();
+    applyMeta(m);
+    const last = Number(m.last || 0);
+    if (last > since) {
+      const text = await (await fetch("/spots?since=" + since)).text();
+      const rows = text.trim() ? text.trim().split("\n").map(JSON.parse) : [];
+      addPins(rows);
+      rows.forEach(r => { if (r.ts > since) since = r.ts; });
+    }
+  } catch (e) {
+    document.getElementById("gate").textContent = String(e).slice(0, 40);
+    document.getElementById("gate").className = "zero";
+  }
+}
+
+selectRx("sigma-ctma");
+tick();
+setInterval(tick, 2000);
+</script>
+</body>
+</html>
